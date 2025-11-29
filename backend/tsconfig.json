@@ -11,10 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "moduleResolution": "node",
-    "baseUrl": ".",
-    "paths": {
-      "zod": ["./node_modules/zod"]
-    },
     "types": ["node"]
   },
   "include": ["src/**/*", "../shared/**/*"],

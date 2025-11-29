@@ -16,20 +16,20 @@ export const vitalsSchema = z.object({
 
 export const medicationSchema = z.object({
   name: z.string().min(1),
-  dosage: z.string(),
-  status: z.enum(['Current', 'Prescribed', 'Discontinued']),
+  dosage: z.string().nullable().default(''),
+  status: z.enum(['Current', 'Prescribed', 'Discontinued']).default('Current'),
 });
 
 export const consultNotesSchema = z.object({
-  subjective: z.string(),
-  objective: z.string(),
-  plan: z.string(),
+  subjective: z.string().nullable().default(''),
+  objective: z.string().nullable().default(''),
+  plan: z.string().nullable().default(''),
 });
 
 export const visitDataSchema = z.object({
-  visit_summary: z.string().min(1),
+  visit_summary: z.string().default(''),
   vitals: vitalsSchema,
-  medications: z.array(medicationSchema),
+  medications: z.array(medicationSchema).default([]),
   consult_notes: consultNotesSchema,
 });
 

@@ -11,19 +11,25 @@ import { updateVisitRecord } from './database';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-export async function processVisit(payload: ProcessVisitWebhookPayload): Promise<void> {
+export async function processVisit(payload: ProcessVisitWebhookPayload, liveTranscript?: string): Promise<void> {
   const { visitId, audioUrl } = payload;
   const startTime = Date.now();
 
   try {
     logger.info(`Starting processing for visit ${visitId}`);
 
-    // Step 1: Transcription (simulated or real)
-    logger.info(`Step 1: Transcribing audio...`);
-    const transcriptStart = Date.now();
-    const transcript = await transcribeAudio(audioUrl);
-    const transcriptDuration = Date.now() - transcriptStart;
-    logger.info(`Transcription completed in ${transcriptDuration}ms`);
+    // Step 1: Use live transcript if provided, otherwise transcribe
+    let transcript: string;
+    if (liveTranscript && liveTranscript.trim()) {
+      logger.info(`Step 1: Using provided live transcript (${liveTranscript.length} chars)`);
+      transcript = liveTranscript;
+    } else {
+      logger.info(`Step 1: Transcribing audio...`);
+      const transcriptStart = Date.now();
+      transcript = await transcribeAudio(audioUrl);
+      const transcriptDuration = Date.now() - transcriptStart;
+      logger.info(`Transcription completed in ${transcriptDuration}ms`);
+    }
 
     // Step 2: PII Redaction
     logger.info(`Step 2: Redacting PII...`);

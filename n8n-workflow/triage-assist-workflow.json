@@ -1,0 +1,474 @@
+{
+  "name": "TriageAssist - Medical Triage Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-visit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "process-visit"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, visitId: $json.body.visitId, message: 'Processing started' }) }}",
+        "options": {}
+      },
+      "id": "respond-immediately",
+      "name": "Respond Immediately",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-input",
+              "leftValue": "={{ $json.body.visitId && $json.body.transcript }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and prepare data for processing\nconst input = $input.first().json.body;\n\nreturn {\n  visitId: input.visitId,\n  transcript: input.transcript || '',\n  audioUrl: input.audioUrl || '',\n  nurseId: input.nurseId || null,\n  metadata: input.metadata || {},\n  processedAt: new Date().toISOString()\n};"
+      },
+      "id": "prepare-data",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5001/analyze",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.transcript, language: 'en' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "presidio-analyze",
+      "name": "Presidio Analyze PII",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 200],
+      "continueOnFail": true,
+      "notes": "Detects PII entities. Deploy Presidio: docker run -p 5001:5001 mcr.microsoft.com/presidio-analyzer"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5002/anonymize",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Prepare Data').item.json.transcript, analyzer_results: $json }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "presidio-anonymize",
+      "name": "Presidio Anonymize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 200],
+      "continueOnFail": true,
+      "notes": "Redacts detected PII. Deploy: docker run -p 5002:5002 mcr.microsoft.com/presidio-anonymizer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle Presidio response or use original transcript\nconst prepareData = $('Prepare Data').item.json;\nconst anonymizeResult = $input.first().json;\n\n// Use anonymized text if available, otherwise use original\nconst redactedTranscript = anonymizeResult?.text || prepareData.transcript;\n\nreturn {\n  ...prepareData,\n  redactedTranscript: redactedTranscript,\n  piiDetected: anonymizeResult?.text ? true : false\n};"
+      },
+      "id": "handle-pii-result",
+      "name": "Handle PII Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "content": "You are a medical transcription assistant. Extract structured information from medical triage conversation transcripts.\n\nOutput ONLY valid JSON matching this exact structure:\n{\n  \"visit_summary\": \"A 1-2 sentence professional summary of the visit.\",\n  \"vitals\": {\n    \"pain_level\": 0-10 integer or null if not mentioned,\n    \"pain_type\": \"e.g., 'Throbbing', 'Sharp', 'Dull', 'Burning', 'Aching', 'Stabbing', or null\",\n    \"pain_location\": \"Body part mentioned or null\"\n  },\n  \"medications\": [\n    {\n      \"name\": \"Drug name (normalized)\",\n      \"dosage\": \"e.g., '50mg', '200mg'\",\n      \"status\": \"Either 'Current' or 'Prescribed'\"\n    }\n  ],\n  \"consult_notes\": {\n    \"subjective\": \"Patient's verbal complaints and symptoms\",\n    \"objective\": \"Nurse's observations and findings\",\n    \"plan\": \"Next steps, recommendations, or treatment plan\"\n  }\n}\n\nRules:\n- Output ONLY the JSON object, no markdown, no explanations\n- Use null for missing values\n- Extract pain level as integer 0-10\n- Be clinically accurate and professional"
+            },
+            {
+              "content": "=Extract structured medical data from this transcript:\n\n{{ $json.redactedTranscript }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1000
+        }
+      },
+      "id": "openai-extract",
+      "name": "OpenAI Extract Data",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1650, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI response and prepare for database update\nconst prevData = $('Handle PII Result').item.json;\nlet aiOutput;\n\ntry {\n  const response = $input.first().json;\n  // Handle different response formats\n  if (typeof response.message?.content === 'string') {\n    aiOutput = JSON.parse(response.message.content);\n  } else if (response.text) {\n    aiOutput = JSON.parse(response.text);\n  } else {\n    aiOutput = response;\n  }\n} catch (e) {\n  // Default structure if parsing fails\n  aiOutput = {\n    visit_summary: '',\n    vitals: { pain_level: null, pain_type: null, pain_location: null },\n    medications: [],\n    consult_notes: { subjective: '', objective: '', plan: '' }\n  };\n}\n\nreturn {\n  visitId: prevData.visitId,\n  audioUrl: prevData.audioUrl,\n  nurseId: prevData.nurseId,\n  redactedTranscript: prevData.redactedTranscript,\n  aiOutput: aiOutput,\n  processedAt: prevData.processedAt,\n  completedAt: new Date().toISOString()\n};"
+      },
+      "id": "parse-ai-output",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://cloud.langfuse.com/api/public/ingestion",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ batch: [{ type: 'trace-create', body: { id: $json.visitId, name: 'triage-extraction', input: { transcript: $json.redactedTranscript }, output: $json.aiOutput, metadata: { processedAt: $json.processedAt } } }] }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "langfuse-log",
+      "name": "Langfuse Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2050, 200],
+      "continueOnFail": true,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_LANGFUSE_CREDENTIAL_ID",
+          "name": "Langfuse API"
+        }
+      },
+      "notes": "Optional: Log to Langfuse for LLM observability. Remove if not using Langfuse."
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://YOUR_SUPABASE_URL.supabase.co/rest/v1/visits?id=eq.' + $json.visitId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'review', visit_summary: $json.aiOutput.visit_summary || '', vitals: $json.aiOutput.vitals || {}, medications: $json.aiOutput.medications || [], consult_notes: $json.aiOutput.consult_notes || {}, raw_transcript: $json.redactedTranscript, updated_at: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "supabase-update",
+      "name": "Supabase Update Visit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase API Key"
+        }
+      },
+      "notes": "Update with your Supabase URL. Credential should have header: apikey = YOUR_SERVICE_ROLE_KEY"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log success\nconst data = $input.first().json;\nconsole.log('Visit processed successfully:', data);\nreturn { success: true, visitId: $('Parse AI Output').item.json.visitId };"
+      },
+      "id": "success-log",
+      "name": "Success Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 200]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://YOUR_SUPABASE_URL.supabase.co/rest/v1/visits?id=eq.' + $('Prepare Data').item.json.visitId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ status: 'error', updated_at: new Date().toISOString() }) }}",
+        "options": {}
+      },
+      "id": "error-update",
+      "name": "Error - Update Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "error",
+              "value": "Missing required fields: visitId and transcript"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "validation-error",
+      "name": "Validation Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Respond Immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Immediately": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "Presidio Analyze PII",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Presidio Analyze PII": {
+      "main": [
+        [
+          {
+            "node": "Presidio Anonymize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Presidio Anonymize": {
+      "main": [
+        [
+          {
+            "node": "Handle PII Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle PII Result": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Langfuse Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Langfuse Log": {
+      "main": [
+        [
+          {
+            "node": "Supabase Update Visit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Update Visit": {
+      "main": [
+        [
+          {
+            "node": "Success Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Error - Update Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Medical",
+      "createdAt": "2025-11-28T00:00:00.000Z",
+      "updatedAt": "2025-11-28T00:00:00.000Z"
+    },
+    {
+      "name": "HIPAA",
+      "createdAt": "2025-11-28T00:00:00.000Z",
+      "updatedAt": "2025-11-28T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-28T00:00:00.000Z",
+  "versionId": "1"
+}
+

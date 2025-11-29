@@ -2,90 +2,138 @@
 
 A HIPAA-compliant, voice-first medical triage assistant for nurses that provides real-time transcription and automated structured record generation.
 
-## Architecture Overview
+## Quick Start
 
-### Fast Lane (Visuals)
-- **Protocol**: WebSocket (wss://)
-- **Provider**: Deepgram (nova-2-medical)
-- **Latency**: < 300ms from speech to screen
-- **Data**: Ephemeral, never stored
+### 1. Install Dependencies
 
-### Slow Lane (Record)
-- **Protocol**: HTTPS (POST)
-- **Orchestrator**: n8n (or n8n-mock for development)
-- **Database**: Supabase (PostgreSQL)
-- **Storage**: Supabase Storage
-- **AI Model**: GPT-4o
+```bash
+# Backend
+cd backend && npm install
+
+# Frontend (Next.js)
+cd frontend && npm install
+
+# n8n-mock
+cd n8n-mock && npm install
+```
+
+### 2. Configure Environment
+
+**Backend & n8n-mock**: Edit `.env` in root directory
+
+**Frontend**: Edit `frontend/.env.local`
+
+### 3. Set Up Supabase
+
+1. Create the `visits` table (see `SETUP.md`)
+2. Create storage bucket `patient-audio-raw`
+3. Enable Realtime on `visits` table
+
+### 4. Start Services
+
+```bash
+# Terminal 1: n8n-mock (port 3001)
+cd n8n-mock && npm run dev
+
+# Terminal 2: Backend API (port 3000)
+cd backend && npm run dev
+
+# Terminal 3: Frontend (port 3000 or next available)
+cd frontend && npm run dev
+```
+
+### 5. Open Application
+
+Visit http://localhost:3000 (or the port shown in terminal)
+
+## Architecture
+
+```
+┌─────────────────┐
+│   Frontend      │  Next.js (React)
+│   Port 3000+    │
+└────────┬────────┘
+         │
+         ├─── WebSocket ────► Deepgram (nova-2-medical)
+         │
+         ├─── REST API ─────► Backend API (Port 3000)
+         │
+         └─── Realtime ─────► Supabase
+                 ▲
+                 │
+┌────────────────┴────────┐
+│   Backend API           │  Express + TypeScript
+│   Port 3000             │
+└────────┬────────────────┘
+         │
+         ├─── Storage ─────► Supabase Storage
+         │
+         └─── Webhook ─────► n8n-mock (Port 3001)
+                              │
+                              ├─── Transcription
+                              ├─── PII Redaction
+                              └─── AI Extraction (GPT-4o)
+```
 
 ## Project Structure
 
 ```
 triageassist/
-├── frontend/              # React tablet application
-├── backend/               # API server (Supabase integration)
-├── n8n-mock/             # Simulated n8n workflow service
-├── shared/               # Shared types and utilities
-├── docs/                 # Documentation
-└── README.md
+├── frontend/          # Next.js app (React + TypeScript + Tailwind)
+│   ├── app/          # Next.js app router
+│   ├── components/   # React components
+│   ├── hooks/        # Custom React hooks
+│   ├── lib/          # Services (API, Supabase)
+│   └── types/        # TypeScript types
+├── backend/          # Express API server
+├── n8n-mock/         # Simulated n8n workflow
+├── shared/           # Shared types (for backend/n8n-mock)
+├── docs/             # Documentation
+└── .env              # Environment variables (backend/n8n-mock)
 ```
 
 ## Key Features
 
-1. **Live Transcription**: Real-time WebSocket connection to Deepgram
+1. **Live Transcription**: Real-time WebSocket to Deepgram (< 300ms latency)
 2. **Dual Audio Capture**: Stream to WebSocket + buffer locally
 3. **Automated Processing**: AI converts conversation to structured JSON
 4. **Real-time Sync**: Supabase Realtime updates form fields
-5. **HIPAA Compliance**: PII redaction, encrypted storage, UUID-based filenames
+5. **HIPAA Compliance**: PII redaction, encrypted storage, UUID filenames
 
-## Development Setup
+## Environment Variables
 
-### Prerequisites
-- Node.js 18+
-- npm or yarn
-- Supabase account
-- Deepgram API key
-- OpenAI API key (for n8n-mock)
+### Backend & n8n-mock (`.env`)
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_ANON_KEY`
+- `OPENAI_API_KEY`
+- `DEEPGRAM_API_KEY`
 
-### Environment Variables
-See `.env.example` files in each service directory.
+### Frontend (`frontend/.env.local`)
+- `NEXT_PUBLIC_API_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_DEEPGRAM_API_KEY`
 
-## Services
+## Tech Stack
 
-### Frontend
-React-based tablet application with:
-- Deepgram WebSocket integration
-- Supabase Realtime subscriptions
-- React Hook Form for structured data
-- Audio playback component
+- **Frontend**: Next.js 16, React 19, TypeScript, Tailwind CSS
+- **Backend**: Express, TypeScript
+- **Database**: Supabase (PostgreSQL)
+- **Storage**: Supabase Storage
+- **AI**: OpenAI GPT-4o
+- **Transcription**: Deepgram (nova-2-medical)
 
-### Backend
-API server handling:
-- Supabase authentication
-- File upload to Supabase Storage
-- Database operations
-- Realtime triggers
+## Security
 
-### n8n-mock
-Simulated n8n workflow service that:
-- Mimics n8n processing timing (10-15 seconds)
-- Simulates transcription, PII redaction, and AI processing
-- Outputs structured JSON matching the data dictionary
-- Can be swapped with real n8n service seamlessly
-
-## Data Flow
-
-1. **Recording Start**: Frontend establishes WebSocket + starts local buffer
-2. **Live Transcription**: Deepgram streams text to UI (< 300ms latency)
-3. **Stop Recording**: Audio blob uploaded to Supabase Storage
-4. **Processing**: n8n-mock (or n8n) processes audio → transcription → PII redaction → AI extraction
-5. **Update**: Supabase Realtime triggers form auto-population
-6. **Review**: Nurse reviews and edits structured data
-7. **Save**: Final record committed to database
-
-## Security & Compliance
-
-- All audio encrypted at rest
 - PII redaction before AI processing
-- UUID-based filenames (no patient names)
+- Encrypted storage (Supabase)
+- UUID-based filenames
 - HIPAA-compliant data handling
 
+## Documentation
+
+- `SETUP.md` - Detailed setup instructions
+- `TESTING_GUIDE.md` - Testing guide
+- `API_KEYS_GUIDE.md` - API keys setup
+- `docs/ARCHITECTURE.md` - System architecture

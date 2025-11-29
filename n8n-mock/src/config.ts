@@ -2,6 +2,12 @@
  * Configuration management for n8n-mock service
  */
 
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load .env from root directory
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
 export const config = {
   // Supabase
   supabaseUrl: process.env.SUPABASE_URL || '',
@@ -19,8 +25,8 @@ export const config = {
   processingDelayMax: parseInt(process.env.PROCESSING_DELAY_MAX || '15000', 10),
   
   // Server
-  port: parseInt(process.env.PORT || '3001', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
+  port: parseInt(process.env.N8N_MOCK_PORT || process.env.PORT || '3001', 10),
+  nodeEnv: process.env.N8N_MOCK_NODE_ENV || process.env.NODE_ENV || 'development',
 };
 
 // Validate required environment variables

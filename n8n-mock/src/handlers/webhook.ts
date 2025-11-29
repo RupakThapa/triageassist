@@ -14,7 +14,7 @@ export async function processVisitWebhook(
   const startTime = Date.now();
   
   try {
-    const payload: ProcessVisitWebhookPayload = req.body;
+    const payload = req.body as ProcessVisitWebhookPayload & { transcript?: string };
     
     // Validate payload
     if (!payload.visitId || !payload.audioUrl) {
@@ -25,13 +25,19 @@ export async function processVisitWebhook(
       return;
     }
 
-    logger.info(`Processing visit ${payload.visitId}`);
+    logger.info(`Processing visit ${payload.visitId}${payload.transcript ? ' (with live transcript)' : ''}`);
+    logger.info(`Transcript preview: "${payload.transcript?.substring(0, 50)}..."`);
 
     // Process asynchronously (don't block the response)
     // In production, you might want to use a queue system
-    processVisit(payload).catch((error) => {
-      logger.error(`Error processing visit ${payload.visitId}:`, error);
-    });
+    processVisit(payload, payload.transcript)
+      .then(() => {
+        logger.info(`✅ Visit ${payload.visitId} processing completed successfully`);
+      })
+      .catch((error) => {
+        logger.error(`❌ Error processing visit ${payload.visitId}:`, error);
+        console.error('Full error stack:', error);
+      });
 
     // Return immediate response
     const response: ProcessVisitWebhookResponse = {
